@@ -55,7 +55,8 @@ probe_based_genotyping
 └── scripts 
 │   ├── probe_based_genotyping.Rmd
 │   ├── probe_based_apoe_adjunct.Rmd
-│   └── demo_genotyping.Rmd
+│   ├── demo_genotyping.Rmd
+│   └── ignore.Rmd
 ├── data
 │   ├── raw_data.csv (user input)
 │   ├── example_raw_data_format.csv
