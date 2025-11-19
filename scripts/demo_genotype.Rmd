@@ -1,0 +1,92 @@
+---
+title: "demo_genotype"
+output: html_document
+date: "2025-11-06"
+---
+
+# 1. Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(lubridate)
+library(arsenal)
+library(ggplot2)
+
+root_dir_path <- readline(prompt = "Please enter the root directory path (e.g., /Users/user/Box/project/): ")
+knitr::opts_knit$set(root.dir = root_dir_path)
+root.dir <- getwd()
+```
+
+# 2. Data import and preparation
+```{r}
+demo_data_path <- readline(prompt = "Please provide the path for demographic data path (e.g., data/demo_data.csv): ") 
+demo_data <- read_csv(demo_data_path)# Warning may display due to NA or missing data in some columns
+
+#User-defined columns to use in re-structuring data frame for incorporating demographic data
+Sample <- readline(prompt = "Please provide the column name for Sample identification: ") 
+DOC <- readline(prompt = "Please provide the column name for date of collection: ") 
+DOB <- readline(prompt = "Please provide the column name for date of birth: ") 
+sex <- readline(prompt = "Please provide the column name for sex identification: ") 
+dx <- readline(prompt = "Please provide the column name for diagnosis at draw: ") 
+status <- readline(prompt = "Please provide the column name for gene status: ") 
+
+list <- c(Sample ,DOC, DOB, sex, dx, status)
+
+demo_data = select(demo_data, list) #Select data for processing
+colnames(demo_data) <- c("Sample", "DOC", "DOB", "Sex", "Dx", "Status") #Re-define and standardize well names for use in this script
+
+demo_data$DOC <- mdy(demo_data$DOC)
+demo_data$DOB <- mdy(demo_data$DOB)
+
+# if DOB somehow ends up *after* DOC, assume they meant 1900s instead of 2000s
+demo_data$DOB[demo_data$DOB > demo_data$DOC] <-
+  demo_data$DOB[demo_data$DOB > demo_data$DOC] - years(100)
+
+demo_data$Age_at_DC <- as.numeric((demo_data$DOC - demo_data$DOB) / 365.24)
+
+alternate_ID <- readline(prompt = "Please provide the path for alternative sample ID's (e.g., R_output/alt_IDs): ") 
+alternate_ID <- read_csv(alternate_ID)# Warning may display due to NA or missing data in some columns
+alternate_ID <- alternate_ID[,-1]
+
+demo_data <- merge(alternate_ID, demo_data, by="Sample")
+demo_data <- demo_data[,-1]
+demo_data
+```
+
+# 3. Demographic table
+```{r}
+ratio_gene_data <- readline(prompt = "Please provide the path for gene data (e.g., R_output/ratio_gene_data.csv): ") 
+ratio_gene_data <- read_csv(ratio_gene_data)# Warning may display due to NA or missing data in some columns
+ratio_gene_data <- ratio_gene_data[,-1]
+
+demo_data <- merge(ratio_gene_data, demo_data, by="Alternate_ID")
+
+allele_ID <- readline(prompt = "Please provide the column name for allele IDs (e.g., Allele_ID): ")
+
+# Build the formula dynamically
+formula_str <- paste("Dx ~", allele_ID, "+ Sex + Age_at_DC")
+demo_formula <- as.formula(formula_str)
+
+# Then run tableby
+demo_table <- tableby(demo_formula, data = demo_data)
+summary(demo_table, text=TRUE)
+
+write.csv(summary(demo_table, text=TRUE), "R_output/demo_table.csv")
+```
+
+# 4. Boxplot
+```{r}
+demo_boxplot_by_allele_age <- ggplot(demo_data, aes(x = Dx, y = Age_at_DC, fill = Allele_ID
+)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Cohort Summary: Distribution of Age by Diagnosis and Allele ID",
+    x = "Diagnosis (Dx)",
+    y = "Age at Date of Collection (Years)",
+    fill = "Allele ID") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(hjust = 0.5) )
+print(demo_boxplot_by_allele_age)
+
+ggsave("R_output/diagnosis_allele_age_boxplot.pdf", plot = demo_boxplot_by_allele_age, width = 8, height = 6)
+```
