@@ -1,0 +1,296 @@
+---
+title: "probe_based_genotyping"
+output: html_document
+date: "2025-10-22"
+---
+
+# 1. Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+
+root_dir_path <- readline(prompt = "Please enter the root directory path (e.g., /Users/user/Box/project/): ")
+knitr::opts_knit$set(root.dir = root_dir_path)
+root.dir <- getwd()
+```
+
+# 2. Data import and preparation
+
+```{r}
+#Create output directory
+dir.create("R_output/")
+
+raw_data_path <- readline(prompt = "Please provide the raw data path (e.g., data/raw_data.csv): ") 
+raw_data <- read_csv(raw_data_path)# Warning may display due to NA or missing data in some columns
+#raw_data$Sample <- sub(                  # Example code provided to clean up Sample names if necessary
+                      # "_10ng$",         # "_10ng$" variable by user dependent on undesired phrase in Sample name column
+                      # "",               # Enter replace previous user-defined phrase with ""
+                      # raw_data$Sample)  # The dataframe and column to be manipulated
+
+#User-defined columns to use in re-structuring data frame for genotype ratio generation
+
+Well <- readline(prompt = "Please provide the column name for Well identification: ") 
+Sample <- readline(prompt = "Please provide the column name for Sample identification: ") 
+TargetType <- readline(prompt = "Please provide the column name for TargetType identification: ") 
+Target <- readline(prompt = "Please provide the column name for Target identification: ") 
+Concentration <- readline(prompt = "Please provide the column name for Concentration identification: ") 
+
+list <- c(Well ,Sample, TargetType, Target, Concentration)
+
+raw_data = select(raw_data, list) #Select data for processing
+colnames(raw_data) <- c("Well", "Sample", "TargetType", "Target", "Concentration") #Re-define and standardize well names for use in this script
+
+raw_data
+```
+
+```{r}
+#Required for samples run in duplicate: Convert rows corresponding to SNP ID's to columns, per sample
+raw_data_wider <- raw_data %>% # Transform raw_data variables of interest from row to column format
+  pivot_wider(id_cols = c(Well, Sample), # Columns that uniquely identify each observation
+              names_from = Target, # Column to transform unique values from row to column based on id_cols defined above
+              values_from = Concentration) # Column to use values from to fill the new columns define in names_from
+raw_data_wider
+```
+
+# 3. Ratio generation
+
+## a. Extract dataset information
+
+```{r}
+#Automatically extract number of SNP assessed in dataset 
+
+fluorophore <- c("FAM", "VIC", "HEX") #Define the list of dyes
+col_names <- names(raw_data_wider) # Extract column names
+
+# In preparation of loop, create an empty vector to store results
+fluorophore_counts <- numeric(length(fluorophore))
+names(fluorophore_counts) <- fluorophore
+
+# Loop through each dye to calculate its total occurrences
+for (i in 1:length(fluorophore)) {
+  probe <- fluorophore[i]
+  pattern <- probe # Set the pattern for the current dye (e.g., just "FAM")
+  match_positions <- gregexpr(pattern, col_names, ignore.case = TRUE) # Find all matches of pattern across all column names. gregexpr returns a list of matched positions
+  counts_per_column <- sapply(match_positions, function(x) { # Count the number of matches in each column name. ifelse handles the case where a column has no match (-1)
+    ifelse(x[1] == -1, 0, length(x)) })
+  fluorophore_counts[probe] <- sum(counts_per_column)} # Sum the counts for the current dye and store the result
+
+# Define number of SNP assessed in this assay
+probes_per_snp <- length(fluorophore_counts[fluorophore_counts > 0])# Define number of probes per snp
+num_snp <- sum(fluorophore_counts)/probes_per_snp # Total fluorophore count divided by the number of fluorophores represented
+
+print(fluorophore_counts)
+print(num_snp)
+print(probes_per_snp)
+```
+
+## b. Calculate dataset ratios
+
+```{r}
+# Convert the last n columns of raw_data_wider tibble to numeric values
+raw_data_wider[, (ncol(raw_data_wider)-((num_snp*probes_per_snp)-1)):ncol(raw_data_wider)] <- lapply(
+  raw_data_wider[, (ncol(raw_data_wider)-((num_snp*probes_per_snp)-1)):ncol(raw_data_wider)], # Select the last n columns equal to the # of SNP x number of probes per SNP, minus 1 for column indexing
+  as.numeric) # Apply as.numeric
+
+#Calculate genotype ratio from the last four columns of the data frame. Assign the result to a new column named 'ratio' in the 'raw_data_wider' data frame
+raw_data_wider$ratio <- apply(X = raw_data_wider[, (ncol(raw_data_wider)-((num_snp*probes_per_snp)-1)):ncol(raw_data_wider)], #Apply a function to a subset of the data frame (X) by selecting the last four columns
+                              MARGIN = 1, #Apply function row-wise
+                              FUN = function(row_values) { #The function to be executed for each row.
+                              numeric_values <- na.omit(row_values) #Remove NA values: Filter out any missing values from the four columns.
+                              if ((length(numeric_values)) != 2) { #Check for exactly two remaining values
+                              return(NA)} #If the count is not 2, return NA for this row's ratio
+                              return(numeric_values[1] / numeric_values[2])}) #Calculate the ratio (FIRST value divided by the SECOND value), if there are exactly two values present 
+ratio_data <- raw_data_wider #rename from raw_data_wider to ratio_data
+
+write.csv(ratio_data, "R_output/ratio_data.csv")
+ratio_data
+```
+
+# 4. Checkpoint: Data summary
+
+## a. Ratio summary statistics
+
+```{r}
+dir.create("R_output/Summary_statistics")
+
+breaks <- c(-Inf, 0.5, 1.5, Inf) # Define bounds for bins
+labels <- c("Bin_0_and_below", "Bin_1", "Bin_2_and_Above")
+binned_data <- cut(x = ratio_data$ratio, breaks = breaks, labels = labels, right = TRUE)
+
+summary_by_bin <- ratio_data %>%
+  # Ensure your bin factor is a column in the data frame/tibble
+  mutate(Bin = binned_data) %>%
+  
+  group_by(Bin) %>%
+  
+  summarise(
+    Min = min(ratio, na.rm = TRUE),
+    Max = max(ratio, na.rm = TRUE),
+    Mean = mean(ratio, na.rm = TRUE),
+    Median = median(ratio, na.rm = TRUE),
+    SD = sd(ratio, na.rm = TRUE),
+    Count = n())
+write.csv(summary_by_bin, "R_output/Summary_statistics/summary_by_bin.csv")
+print(summary_by_bin)
+```
+
+## b. Ratio histogram plots
+
+```{r}
+ratio_hist <- data.frame(ratio_data[which(ratio_data$ratio != c(NaN,Inf)),])
+
+pdf(file = "R_output/Summary_statistics/hist_ratio_plot.pdf", width = 7, height = 5) # Dimensions in inches
+hist(log10(ratio_hist$ratio), breaks = 100, main = "Ratio values", xlab = "Log10 Ratio values" )
+dev.off()
+
+pdf(file = "R_output/Summary_statistics/ratio_0_hist_plot.pdf", width = 7, height = 5) # Dimensions in inches
+hist(log10(ratio_hist$ratio), xlim = c(log10(0.0001), log10(0.5)), breaks = 100, main = "Zoomed in to ratio values 0.0001 - 0.5", xlab = "Log10 Ratio values")
+dev.off()
+
+pdf(file = "R_output/Summary_statistics/ratio_1_hist_plot.pdf", width = 7, height = 5) # Dimensions in inches
+hist(log10(ratio_hist$ratio), xlim = c(log10(0.5), log10(1.5)), breaks = 1000, main = "Zoomed in to ratio values 0.5 - 1.5", xlab = "Log10 Ratio values")
+dev.off()
+
+pdf(file = "R_output/Summary_statistics/ratio_2_hist_plot.pdf", width = 7, height = 5) # Dimensions in inches
+hist(log10(ratio_hist$ratio), xlim = c(log10(1.5), log10(10000)), breaks = 100, main = "Zoomed in to ratio values 1.5 - 1000", xlab = "Log10 Ratio values")
+dev.off()
+```
+
+## c. Flags
+
+```{r}
+# Create flags for manually checking data on the cusp of ratio values 0, 1, or 2
+# Tolerance is assay-dependent and may also be a user-defined parameter
+my_numbers <- summary_by_bin$Max - summary_by_bin$Min 
+tolerance <- sum(my_numbers[is.finite(my_numbers)]) #Using a total range of bin values, added together to stretch the extend the threshold, define how close a ratio can be to a cusp value (e.g., 0.5 or 1.5) before being flagged.
+ratio_data$Cusp_flag <- abs(ratio_data[,c("ratio")] - 0.5) < tolerance |  # Create a logical flag (TRUE/FALSE) for samples whose ratio values are within 'tolerance' of 0.5, 1, or 1.5
+                            abs(ratio_data[,c("ratio")] - 1.5) < tolerance
+ratio_data$Cusp_flag <- as.character(ratio_data$Cusp_flag) # Convert the logical flag (TRUE/FALSE) into character strings for use
+
+#Manually assess these sample wells
+cusp_flag_check <- ratio_data[which(ratio_data$Cusp_flag == TRUE), ] # Select rows that require manual assessment
+
+write.csv(cusp_flag_check, "R_output/Summary_statistics/cusp_flag_check.csv")
+cusp_flag_check
+```
+
+# 3. Create alternative sample ID's
+
+```{r}
+Alternate_ID_coding <- data.frame(unique(ratio_data$Sample)) #Capture unique Sample ID to generate Alternative_ID's for
+colnames(Alternate_ID_coding)[1] <- "Sample" #Define column name
+Alternate_ID_coding$Alternate_ID <- paste0("Sample_", sprintf("%03d", 1:nrow(Alternate_ID_coding))) #Create Alternative_ID. Pad with zeros to 3 digits
+ratio_data <- merge(Alternate_ID_coding, ratio_data, by="Sample")
+
+ratio_data = select(ratio_data, -c("Sample"))
+
+write.csv(Alternate_ID_coding, "R_output/Alternate_ID_coding.csv") #Write Alternative_ID_coding to the R_output folder
+Alternate_ID_coding
+```
+
+# 4. Genotype
+
+## a. Standardize sample ratios
+
+```{r}
+ratio_data$ratio_std[ratio_data$ratio >= 1.5] <- 2 #For all ratio values greater than or equal to 1.5, assign allele copy variable 2
+ratio_data$ratio_std[ratio_data$ratio <= 1.5 & ratio_data$ratio > 0.5] <- 1 #For all ratio values less than or equal to 1.5, and greater than 0.5, assign allele copy variable 1
+ratio_data$ratio_std[ratio_data$ratio <= 0.5] <- 0 #For all ratio values less than or equal to 0.5, assign allele copy variable 0
+print(ratio_data)
+```
+
+## b. Create genotype refrence
+
+```{r}
+ratio_std <- c(0, 1, 2) #Allele ratio
+
+allele_ratio_value_0 <- readline(prompt = "Please provide the diploid allele call for a ratio of 0: ") 
+allele_ratio_value_1 <- readline(prompt = "Please provide the diploid allele call for a ratio of 1: ") 
+allele_ratio_value_2 <- readline(prompt = "Please provide the diploid allele call for a ratio of 2: ") 
+
+allele <- c(allele_ratio_value_0, allele_ratio_value_1, allele_ratio_value_2) #Allele base call per count
+gene_ratio_std_table <- data.frame(ratio_std, allele) #Create data frame
+gene_ratio_std_table
+```
+
+## c. Assign genotype
+
+```{r}
+ratio_gene_data <- merge(ratio_data, gene_ratio_std_table, # merge tables `ratio_data` and `gene_ratio_std_table`, combining by common column `ratio_std`
+                     by.x = "ratio_std", # column in ratio_data used for merging, effectively assigning allele bases via `allele` column in `gene_ratio_std_table`
+                     all.x = TRUE) # Keep all rows in `ratio_data` even if no match exists in `gene_ratio_std_table`
+ratio_gene_data
+```
+
+## d. Clean data
+
+```{r}
+#Retain SNP ID
+#Define SNP + Target columns in data frame
+
+# Capture the input and immediately convert it to an integer
+snp_number <- as.integer(readline(prompt = "Please provide the total number of SNP locations assessed in this assay: "))
+if (snp_number == 1) {
+  snp1_fam <- readline(prompt = "Please provide the SNP 1 FAM probe column name: ")
+  snp1_hex_vic <- readline(prompt = "Please provide the SNP 1 HEX/VIC probe column name: ")
+  snp1 <- sub(pattern = "_(FAM|HEX|VIC)$", replacement = "", x = snp1_fam) #Using either FAM, HEX, or VIC-defined SNP1, remove FAM, HEX, or VIC from SNP 1 name, if present, and retain rs ID
+  #Check for simultaneous presence of non-NA values in the FAM and VIC columns for each SNP.
+   ratio_gene_data <- ratio_gene_data %>%
+    mutate(
+    is_snp1_present = !is.na(!!sym(snp1_fam)) & !is.na(!!sym(snp1_hex_vic)), # Check if both of the same SNP columns (whether FAM, VIC/HEX) have a value (are NOT NA)
+    Source_SNP = case_when( # Create the new column 'Source_SNP'
+    is_snp1_present ~ snp1, # If SNP is present, assign pre-defined value
+    TRUE ~ NA_character_  # If no SNP ID present, assign NA
+    )
+  ) %>%
+  # Optionally remove the helper columns created
+ select(-is_snp1_present)
+   
+} else if (snp_number == 2) {
+  # Block for exactly 2 SNPs
+  snp1_fam <- readline(prompt = "Please provide the SNP 1 FAM probe column name: ")
+  snp1_hex_vic <- readline(prompt = "Please provide the SNP 1 HEX/VIC probe column name: ")
+  snp2_fam <- readline(prompt = "Please provide the SNP 2 FAM probe column name: ")
+  snp2_hex_vic <- readline(prompt = "Please provide the SNP 2 HEX/VIC probe column name: ")
+  snp1 <- sub(pattern = "_(FAM|HEX|VIC)$", replacement = "", x = snp1_fam) #Using either FAM, HEX, or VIC-defined SNP1, remove FAM, HEX, or VIC from SNP 1 name, if present, and retain rs ID
+  snp2 <- sub(pattern = "_(FAM|HEX|VIC)$", replacement = "", x = snp2_fam) #Using either FAM, HEX, or VIC-defined SNP2, remove FAM, HEX, or VIC from SNP 1 name, if present, and retain rs ID
+ 
+   #Check for simultaneous presence of non-NA values in the FAM and VIC columns for each SNP.
+  ratio_gene_data <- ratio_gene_data %>%
+    mutate(
+    is_snp1_present = !is.na(!!sym(snp1_fam)) & !is.na(!!sym(snp1_hex_vic)), # Check if both of the same SNP columns (whether FAM, VIC/HEX) have a value (are NOT NA)
+    is_snp2_present = !is.na(!!sym(snp2_fam)) & !is.na(!!sym(snp2_hex_vic)), # Check if both of the same SNP columns (whether FAM, VIC/HEX) have a value (are NOT NA)
+    Source_SNP = case_when( # Create the new column 'Source_SNP'
+    is_snp1_present ~ snp1, # If SNP is present, assign pre-defined value
+    is_snp2_present ~ snp2, # If SNP is present, assign pre-defined value
+    TRUE ~ NA_character_  # If no SNP ID present, assign NA
+    )
+  ) %>%
+  # Optionally remove the helper columns created
+ select(-is_snp1_present, 
+        -is_snp2_present
+        )
+} else {
+  # Handle cases other than 1 or 2
+  cat("Only 1 or 2 SNP assays are supported by this script.\n")
+}
+
+
+ratio_gene_data = select(ratio_gene_data, c("Alternate_ID", "allele", "Source_SNP")) #Select relevant columns for identification of unique rows
+ratio_gene_data <- unique(ratio_gene_data) # Select for unique rows to remove duplicate wells run per sample
+
+#Order data frame to view organized SNP per sample 
+ratio_gene_data <- ratio_gene_data[order(ratio_gene_data$Source_SNP),] #Order by Source_SNP
+ratio_gene_data <- ratio_gene_data[order(ratio_gene_data$Alternate_ID),] #Order by Source_SNP
+
+# Format ordered genotype alleles for ID by combining diploid allele combinations by rs429358 and rs7412
+ratio_gene_data <- ratio_gene_data %>% # Reshape data from long to wide format, placing rows in columns per Alternate_ID
+  pivot_wider(id_cols = Alternate_ID, # Keep `Alternate_ID` as the identifier column
+              names_from = Source_SNP, # Create new column names based on unique values in `Source_SNP`
+              values_from = allele) # Fill columns with corresponding values from `allele`
+
+write.csv(ratio_gene_data, "R_output/ratio_gene_data.csv")
+ratio_gene_data
+```
