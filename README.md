@@ -73,7 +73,7 @@ probe_based_genotyping
         ├── ratio_0_hist_plot.pdf
         ├── ratio_1_hist_plot.pdf
         ├── ratio_2_hist_plot.pdf
-        └──summary_by_bin.csv       
+        └── summary_by_bin.csv       
 ```
 ## Expected Results
 This script will convert raw concentration or count data from BioRad QX200 ddPCR or other probe-based genotyping assay output to genotype. Expected results will be dependent on specific experiment question and design. 
