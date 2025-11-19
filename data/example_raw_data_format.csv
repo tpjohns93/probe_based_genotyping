@@ -1,0 +1,13 @@
+Well,Sample,TargetType,Target,Concentration
+A01,A,Ch1Unknown,rs429358_FAM,100
+A01,A,Ch2Unknown,rs429358_VIC,100
+A02,A,Ch1Unknown,rs7412_FAM,200
+A02,A,Ch2Unknown,rs7412_VIC,0
+A03,B,Ch1Unknown,rs429358_FAM,200
+A03,B,Ch2Unknown,rs429358_VIC,0
+A04,B,Ch1Unknown,rs7412_FAM,200
+A04,B,Ch2Unknown,rs7412_VIC,0
+A05,C,Ch1Unknown,rs429358_FAM,100
+A05,C,Ch2Unknown,rs429358_VIC,100
+A06,C,Ch1Unknown,rs7412_FAM,100
+A06,C,Ch2Unknown,rs7412_VIC,100
